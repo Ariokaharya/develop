@@ -1,1 +1,28 @@
-// TODO composefile記載する
+services:
+  workspace:
+    image: mcr.microsoft.com/devcontainers/base:ubuntu
+    volumes:
+      - ..:/workspace:cached
+    command: sleep infinity
+
+  frontend:
+    build:
+      context: ../frontend
+    volumes:
+      - ../frontend:/app
+    working_dir: /app
+    command: npm run dev -- --host 0.0.0.0
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+  backend:
+    build:
+      context: ../backend
+    volumes:
+      - ../backend:/app
+    working_dir: /app
+    command: npm run dev
+    ports:
+      - "8080:8080"
