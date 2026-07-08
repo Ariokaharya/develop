@@ -1,0 +1,26 @@
+services:
+  workspace:
+    image: mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm
+    volumes:
+      - ..:/workspaces/sample-fe-be-codespaces:cached
+    command: sleep infinity
+
+  frontend:
+    image: node:22
+    working_dir: /app
+    volumes:
+      - ../frontend:/app:cached
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+  backend:
+    image: node:22
+    working_dir: /app
+    volumes:
+      - ../backend:/app:cached
+    command: sh -c "npm install && npm run dev"
+    ports:
+      - "8080:8080"
