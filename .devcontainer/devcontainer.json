@@ -1,0 +1,40 @@
+{
+  "name": "codespaces-kensho",
+
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/node:1": {}
+  },
+
+  "forwardPorts": [8080, 5500],
+  "portsAttributes": {
+    "8080": {
+      "label": "static site (docker/nginx)",
+      "visibility": "private",
+      "onAutoForward": "notify"
+    },
+    "5500": {
+      "label": "live-reload dev server (A-5 HMR check)",
+      "visibility": "private",
+      "onAutoForward": "notify"
+    }
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "ms-azuretools.vscode-docker",
+        "eamodio.gitlens",
+        "ritwickdey.liveserver"
+      ]
+    }
+  },
+
+  "onCreateCommand": "bash .devcontainer/scripts/on-create.sh",
+  "postCreateCommand": "bash .devcontainer/scripts/post-create.sh",
+  "postStartCommand": "bash .devcontainer/scripts/post-start.sh"
+}
