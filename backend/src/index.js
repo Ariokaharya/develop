@@ -3,6 +3,7 @@ import cors from "cors";
 
 const app = express();
 const port = 8080;
+const key = "ABCDEFGHIJKLMNOPQRSTUVWXYZ123456";
 
 app.use(cors());
 app.use(express.json());
