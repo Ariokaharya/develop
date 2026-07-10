@@ -1,0 +1,13 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "A-4: Launch site in Chrome (via forwarded port)",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://localhost:8080/test.html",
+      "webRoot": "${workspaceFolder}",
+      "sourceMaps": true
+    }
+  ]
+}
