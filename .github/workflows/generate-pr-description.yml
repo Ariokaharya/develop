@@ -1,242 +1,48 @@
-name: Generate PR Description with Copilot
+name: Generate PR Description
 
 on:
-  pull_request_target:
-    types:
-      - opened
+  pull_request:
+    types: [opened]
 
 permissions:
   contents: read
   pull-requests: write
-
-concurrency:
-  group: pr-description-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  copilot-requests: write   # GITHUB_TOKEN認証に必要
 
 jobs:
-  generate-pr-description:
-    name: Generate PR description
+  generate-description:
     runs-on: ubuntu-latest
-
+    # フォークからのPRでは実行しない（セキュリティ対策）
+    if: github.event.pull_request.head.repo.full_name == github.repository
     steps:
-      # pull_request_targetでは、PR側のコードではなく、
-      # ベースブランチ側の信頼済みファイルだけをチェックアウトする。
-      - name: Checkout base branch
-        uses: actions/checkout@v6
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          fetch-depth: 1
-          persist-credentials: false
-
-      # PR本文が空、またはテンプレートから未編集の場合だけ生成する。
-      # 開発者がPR作成前に本文を編集している場合は上書きしない。
-      - name: Check whether PR body can be replaced
-        id: eligibility
-        run: |
-          python3 - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          event = json.loads(
-              Path(os.environ["GITHUB_EVENT_PATH"]).read_text(
-                  encoding="utf-8"
-              )
-          )
-
-          current_body = event["pull_request"].get("body") or ""
-          template_path = Path(".github/pull_request_template.md")
-
-          if not template_path.exists():
-              raise SystemExit(
-                  "::error::.github/pull_request_template.md was not found."
-              )
-
-          template_body = template_path.read_text(encoding="utf-8")
-
-          def normalize(value: str) -> str:
-              return value.replace("\r\n", "\n").strip()
-
-          should_generate = (
-              not normalize(current_body)
-              or normalize(current_body) == normalize(template_body)
-          )
-
-          with open(
-              os.environ["GITHUB_OUTPUT"],
-              "a",
-              encoding="utf-8"
-          ) as output:
-              output.write(
-                  f"should_generate={str(should_generate).lower()}\n"
-              )
-
-          if should_generate:
-              print(
-                  "PR body is empty or unchanged from the template. "
-                  "Copilot generation will run."
-              )
-          else:
-              print(
-                  "PR body was edited before creation. "
-                  "The existing body will not be overwritten."
-              )
-          PY
-
-      - name: Prepare PR context
-        if: steps.eligibility.outputs.should_generate == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          set -euo pipefail
-
-          mkdir -p .copilot-input
-
-          jq '{
-            repository: .repository.full_name,
-            number: .pull_request.number,
-            title: .pull_request.title,
-            current_body: (.pull_request.body // ""),
-            author: .pull_request.user.login,
-            base_ref: .pull_request.base.ref,
-            base_sha: .pull_request.base.sha,
-            head_ref: .pull_request.head.ref,
-            head_sha: .pull_request.head.sha,
-            draft: .pull_request.draft,
-            labels: [.pull_request.labels[].name]
-          }' "$GITHUB_EVENT_PATH" \
-            > .copilot-input/pr-context.json
-
-          gh pr diff "$PR_NUMBER" \
-            --repo "$GITHUB_REPOSITORY" \
-            > .copilot-input/pr.diff
-
-          gh api --paginate \
-            "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" \
-            --jq '
-              .[]
-              | [
-                  .status,
-                  .filename,
-                  (.additions | tostring),
-                  (.deletions | tostring)
-                ]
-              | @tsv
-            ' \
-            > .copilot-input/pr-files.tsv
-
-          echo "Prepared Copilot input files:"
-          wc -c \
-            .copilot-input/pr-context.json \
-            .copilot-input/pr-files.tsv \
-            .copilot-input/pr.diff
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0   # ベースブランチとの差分取得に必要
 
       - name: Set up Node.js
-        if: steps.eligibility.outputs.should_generate == 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: 22
 
-      - name: Install GitHub Copilot CLI
-        if: steps.eligibility.outputs.should_generate == 'true'
-        run: npm install --global @github/copilot
+      - name: Install Copilot CLI
+        run: npm install -g @github/copilot
 
-      - name: Generate PR body with Copilot
-        if: steps.eligibility.outputs.should_generate == 'true'
+      - name: Generate PR description with Copilot CLI
         env:
-          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_CLI_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
-          set -euo pipefail
+          copilot -p "/pr-description スキルを使って、このPRの説明文を作成し /tmp/pr-body.md に書き出してください。ベースブランチは $BASE_REF です。" \
+            -s \
+            --allow-tool='shell(git:*), read, write' \
+            --no-ask-user
 
-          if [ -z "${COPILOT_GITHUB_TOKEN:-}" ]; then
-            echo "::error::COPILOT_CLI_TOKEN is not configured."
-            exit 1
-          fi
-
-          copilot \
-            --silent \
-            --prompt "Use the /pr-description skill. Read .github/pull_request_template.md, .copilot-input/pr-context.json, .copilot-input/pr-files.tsv, and .copilot-input/pr.diff. Generate the completed pull request body. Output only the final Markdown body." \
-            --allow-tool=read \
-            --deny-tool=shell \
-            --deny-tool=write \
-            --deny-tool=url \
-            --no-ask-user \
-            > generated-pr-body.md
-
-      - name: Validate generated PR body
-        if: steps.eligibility.outputs.should_generate == 'true'
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          output_path = Path("generated-pr-body.md")
-
-          if not output_path.exists():
-              raise SystemExit(
-                  "::error::Copilot did not create generated-pr-body.md."
-              )
-
-          body = output_path.read_text(encoding="utf-8").strip()
-
-          required_headings = [
-              "## 変更概要",
-              "## 背景・目的",
-              "## 主な変更内容",
-              "## 影響範囲",
-              "## 動作確認",
-              "## 関連Issue・チケット",
-              "## レビュー観点",
-          ]
-
-          if not body:
-              raise SystemExit(
-                  "::error::Copilot generated an empty PR body."
-              )
-
-          if not body.startswith("## 変更概要"):
-              raise SystemExit(
-                  "::error::The generated body does not start "
-                  "with the required heading."
-              )
-
-          missing_headings = [
-              heading
-              for heading in required_headings
-              if heading not in body
-          ]
-
-          if missing_headings:
-              raise SystemExit(
-                  "::error::Missing required headings: "
-                  + ", ".join(missing_headings)
-              )
-
-          if body.startswith("```") or body.endswith("```"):
-              raise SystemExit(
-                  "::error::The generated body is wrapped "
-                  "in a Markdown code block."
-              )
-
-          if len(body) > 60_000:
-              raise SystemExit(
-                  "::error::The generated PR body is too large."
-              )
-
-          output_path.write_text(
-              body + "\n",
-              encoding="utf-8"
-          )
-
-          print("Generated PR body passed validation.")
-          PY
-
-      - name: Update pull request body
-        if: steps.eligibility.outputs.should_generate == 'true'
+      - name: Update PR body
         env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh pr edit "$PR_NUMBER" \
-            --repo "$GITHUB_REPOSITORY" \
-            --body-file generated-pr-body.md
+          gh pr edit ${{ github.event.pull_request.number }} \
+            --repo ${{ github.repository }} \
+            --body-file /tmp/pr-body.md
